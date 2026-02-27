@@ -255,7 +255,7 @@
 
       const curlState = [0, 0, 0, 0, 0];
       const curlAngles = [
-        [0.7, 0.7, 0.5],
+        [0.8, 0.9, 0.7],   // thumb – same formula as other fingers, visible bend
         [1.5, 1.4, 1.2],
         [1.5, 1.4, 1.2],
         [1.5, 1.4, 1.2],
@@ -336,7 +336,7 @@
         const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
         yAxis.crossVectors(zAxis, xAxis).normalize();
 
-        // Flip axes to match the 3D hand's coordinate system (fix opposite motion)
+        // Flip axes to match the original 3D hand coordinate system
         xAxis.multiplyScalar(-1);
         yAxis.multiplyScalar(-1);
 

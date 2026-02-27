@@ -131,6 +131,7 @@ def generate_frames():
                     current_direction = "RIGHT" if dx > 0 else "LEFT"
                 _last_direction = current_direction
                 _direction_start_time = time.time()
+
         _, buf = cv2.imencode(".jpg", frame)
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
 
