@@ -230,7 +230,13 @@
 
       const curlState = [0, 0, 0, 0, 0];
       const curlAngles = [
-        [0.7, 0.7, 0.5], [1.5, 1.4, 1.2], [1.5, 1.4, 1.2], [1.5, 1.4, 1.2], [1.5, 1.4, 1.2]
+        // Thumb: allow much deeper bend at all 3 joints
+        [1.4, 1.3, 1.1],
+        // Fingers 1–4
+        [1.5, 1.4, 1.2],
+        [1.5, 1.4, 1.2],
+        [1.5, 1.4, 1.2],
+        [1.5, 1.4, 1.2],
       ];
       function applyFingerCurl() {
         fingers.forEach((finger, fi) => {
@@ -253,7 +259,12 @@
             Math.pow(mcp.x - wristPt.x, 2) + Math.pow(mcp.y - wristPt.y, 2) + Math.pow((mcp.z || 0) - (wristPt.z || 0), 2)
           );
           const ratio = Math.min(tipDist / (mcpDist * 1.8), 1.0);
-          curlState[fi] = 1.0 - ratio;
+          let curl = 1.0 - ratio;
+          // Make thumb respond more strongly so it feels less rigid
+          if (fi === 0) {
+            curl = Math.min(Math.max(curl * 1.5, 0), 1);
+          }
+          curlState[fi] = curl;
         });
         applyFingerCurl();
       };
