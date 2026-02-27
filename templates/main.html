@@ -103,14 +103,17 @@
       fill.position.set(0, 3, 1);
       scene.add(fill);
 
+      // Slightly warmer, more natural skin tone and softer joints
       const skinMat = new THREE.MeshStandardMaterial({
-        color: 0xf0c080, roughness: 0.55, metalness: 0.05, envMapIntensity: 0.4
+        color: 0xf3c6a4,    // warm light skin tone
+        roughness: 0.62,    // a bit more matte, less plastic
+        metalness: 0.02,
+        envMapIntensity: 0.35
       });
       const jointMat = new THREE.MeshStandardMaterial({
-        color: 0xe0a860, roughness: 0.4, metalness: 0.1
-      });
-      const nailMat = new THREE.MeshStandardMaterial({
-        color: 0xffeedd, roughness: 0.2, metalness: 0.2
+        color: 0xe0a27a,    // slightly darker, joint-like tone
+        roughness: 0.55,
+        metalness: 0.03
       });
 
       function makeCylinder(rTop, rBot, h, segs) { return new THREE.CylinderGeometry(rTop, rBot, h, segs || 8); }
@@ -138,7 +141,10 @@
       const wristPivot = new THREE.Object3D();
       handRoot.add(wristPivot);
 
-      // Palm as a rounded rectangle extruded into 3D
+      // Palm as a rounded rectangle extruded into 3D, mounted on a pivot so it can flex
+      const palmPivot = new THREE.Object3D();
+      wristPivot.add(palmPivot);
+
       const palmWidth = 0.72;
       const palmHeight = 0.9;
       const palmDepth = 0.2;
@@ -171,7 +177,7 @@
       const palm = new THREE.Mesh(palmGeo, skinMat);
       palm.castShadow = true;
       palm.receiveShadow = true;
-      wristPivot.add(palm);
+      palmPivot.add(palm);
 
       const fingers = [];
       function buildFinger(xOffset, yBase, segLengths, segRadii, fingerIndex) {
@@ -230,9 +236,7 @@
 
       const curlState = [0, 0, 0, 0, 0];
       const curlAngles = [
-        // Thumb: allow much deeper bend at all 3 joints
-        [1.4, 1.3, 1.1],
-        // Fingers 1–4
+        [0.7, 0.7, 0.5],
         [1.5, 1.4, 1.2],
         [1.5, 1.4, 1.2],
         [1.5, 1.4, 1.2],
@@ -244,6 +248,10 @@
           finger.segs.forEach((seg, si) => { seg.pivot.rotation.x = curl * curlAngles[fi][si]; });
         });
       }
+
+      // Smoothed palm bend value (0 = flat, 1 = fully curled)
+      let palmBend = 0;
+      let palmBendTarget = 0;
 
       window.updateFromLandmarks = function(landmarks) {
         const fingerTips = [4, 8, 12, 16, 20];
@@ -259,14 +267,14 @@
             Math.pow(mcp.x - wristPt.x, 2) + Math.pow(mcp.y - wristPt.y, 2) + Math.pow((mcp.z || 0) - (wristPt.z || 0), 2)
           );
           const ratio = Math.min(tipDist / (mcpDist * 1.8), 1.0);
-          let curl = 1.0 - ratio;
-          // Make thumb respond more strongly so it feels less rigid
-          if (fi === 0) {
-            curl = Math.min(Math.max(curl * 1.5, 0), 1);
-          }
-          curlState[fi] = curl;
+          curlState[fi] = 1.0 - ratio;
         });
         applyFingerCurl();
+
+        // Drive palm bend from average curl of the four fingers (ignore thumb)
+        const avgCurl =
+          (curlState[1] + curlState[2] + curlState[3] + curlState[4]) / 4;
+        palmBendTarget = Math.min(Math.max(avgCurl, 0), 1);
       };
 
       let isDragging = false, prevMouse = { x: 0, y: 0 };
@@ -302,7 +310,7 @@
         fetch('/api/hand_landmarks').then(function(r) { return r.json(); }).then(function(data) {
           if (data.landmarks && data.landmarks.length) window.updateFromLandmarks(data.landmarks);
         }).catch(function() {});
-      }, 50);
+      }, 30);
 
       const clock = new THREE.Clock();
       function animate() {
@@ -314,6 +322,12 @@
           handRoot.rotation.y = rotY + Math.sin(t * 0.3) * 0.05;
         }
         handRoot.rotation.z = 0;
+
+        // Smooth palm bending so it feels organic
+        palmBend += (palmBendTarget - palmBend) * 0.15;
+        // Slight flex forward/back and a tiny side tilt when making a fist
+        palmPivot.rotation.x = -palmBend * 0.3;
+        palmPivot.rotation.z = palmBend * 0.12;
         const w = canvas.clientWidth, h = canvas.clientHeight;
         if (canvas.width !== w || canvas.height !== h) {
           renderer.setSize(w, h);

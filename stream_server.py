@@ -93,6 +93,9 @@ def generate_frames():
         rgb_contiguous = np.ascontiguousarray(rgb)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_contiguous)
 
+        # Update timestamp from real time for more accurate tracking
+        _frame_timestamp_ms = int(time.time() * 1000)
+
         # Hand detection and movement
         hand_result = _hand_landmarker.detect_for_video(mp_image, _frame_timestamp_ms)
         current_direction = ""
@@ -128,8 +131,6 @@ def generate_frames():
                     current_direction = "RIGHT" if dx > 0 else "LEFT"
                 _last_direction = current_direction
                 _direction_start_time = time.time()
-
-        _frame_timestamp_ms += 33
         _, buf = cv2.imencode(".jpg", frame)
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
 
