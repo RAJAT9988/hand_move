@@ -22,8 +22,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
 HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 HAND_MODEL_PATH = os.path.join(MODELS_DIR, "hand_landmarker.task")
-FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-FACE_MODEL_PATH = os.path.join(MODELS_DIR, "blaze_face_short_range.tflite")
 
 MOVE_THRESHOLD = 15
 SMOOTH_FRAMES = 5
@@ -33,14 +31,12 @@ app = Flask(__name__, template_folder=os.path.join(SCRIPT_DIR, "templates"))
 # Global camera and detectors (lazy init)
 _camera = None
 _hand_landmarker = None
-_face_detector = None
 _hand_connections = None
 _lock = Lock()
 _hand_positions = []
 _last_direction = ""
 _direction_start_time = 0
 _frame_timestamp_ms = 0
-_face_detected = False
 _hand_landmarks = []  # latest hand landmarks for digital twin (21 points per hand)
 
 
@@ -54,12 +50,11 @@ def download_model(url: str, path: str) -> None:
 
 
 def init_detectors():
-    global _hand_landmarker, _face_detector, _hand_connections
+    global _hand_landmarker, _hand_connections
     with _lock:
         if _hand_landmarker is not None:
             return
         download_model(HAND_MODEL_URL, HAND_MODEL_PATH)
-        download_model(FACE_MODEL_URL, FACE_MODEL_PATH)
         hand_base = python.BaseOptions(model_asset_path=HAND_MODEL_PATH)
         hand_options = vision.HandLandmarkerOptions(
             base_options=hand_base,
@@ -69,13 +64,6 @@ def init_detectors():
             running_mode=vision.RunningMode.VIDEO,
         )
         _hand_landmarker = vision.HandLandmarker.create_from_options(hand_options)
-        face_base = python.BaseOptions(model_asset_path=FACE_MODEL_PATH)
-        face_options = vision.FaceDetectorOptions(
-            base_options=face_base,
-            min_detection_confidence=0.5,
-            running_mode=vision.RunningMode.VIDEO,
-        )
-        _face_detector = vision.FaceDetector.create_from_options(face_options)
         _hand_connections = vision.HandLandmarksConnections.HAND_CONNECTIONS
 
 
@@ -88,7 +76,7 @@ def get_camera():
 
 
 def generate_frames():
-    global _hand_positions, _last_direction, _direction_start_time, _frame_timestamp_ms, _face_detected, _hand_landmarks
+    global _hand_positions, _last_direction, _direction_start_time, _frame_timestamp_ms, _hand_landmarks
     init_detectors()
     cap = get_camera()
     if not cap.isOpened():
@@ -104,22 +92,6 @@ def generate_frames():
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb_contiguous = np.ascontiguousarray(rgb)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_contiguous)
-
-        # Face detection
-        face_result = _face_detector.detect_for_video(mp_image, _frame_timestamp_ms)
-        _face_detected = bool(face_result.detections)
-        if face_result.detections:
-            for detection in face_result.detections:
-                b = detection.bounding_box
-                x1 = max(0, b.origin_x)
-                y1 = max(0, b.origin_y)
-                x2 = min(w, b.origin_x + b.width)
-                y2 = min(h, b.origin_y + b.height)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(
-                    frame, "Face", (x1, y1 - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2,
-                )
 
         # Hand detection and movement
         hand_result = _hand_landmarker.detect_for_video(mp_image, _frame_timestamp_ms)
@@ -157,13 +129,6 @@ def generate_frames():
                 _last_direction = current_direction
                 _direction_start_time = time.time()
 
-        if current_direction or (time.time() - _direction_start_time < 1.0 and _last_direction):
-            display_dir = current_direction or _last_direction
-            (tw, th), _ = cv2.getTextSize(display_dir, cv2.FONT_HERSHEY_SIMPLEX, 2, 3)
-            tx, ty = (w - tw) // 2, 80
-            cv2.putText(frame, display_dir, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 255), 3)
-            cv2.putText(frame, "Hand movement", (tx, ty - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
         _frame_timestamp_ms += 33
         _, buf = cv2.imencode(".jpg", frame)
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
@@ -185,11 +150,6 @@ def serve_person_glb():
     if not os.path.isfile(path):
         return "person.glb not found", 404
     return send_from_directory(SCRIPT_DIR, "person.glb", mimetype="model/gltf-binary")
-
-
-@app.route("/api/face")
-def api_face():
-    return jsonify(faceDetected=_face_detected)
 
 
 @app.route("/api/hand_landmarks")

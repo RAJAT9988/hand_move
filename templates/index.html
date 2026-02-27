@@ -130,15 +130,14 @@
       fill.position.set(-5, 6, 5);
       scene.add(fill);
 
-      // 3D person (person.glb) from project folder — shown when face is detected
+      // 3D person (person.glb) from project folder — always visible now (no face detection)
       let personModel = null;
-      let lastFaceState = false;
       const loader = new THREE.GLTFLoader();
       loader.load(
         '/person.glb',
         function (gltf) {
           personModel = gltf.scene;
-          personModel.visible = false;
+          personModel.visible = true;
           personModel.position.set(0, 0, 0);
           personModel.rotation.y = Math.PI;
           scene.add(personModel);
@@ -154,22 +153,12 @@
           personModel.position.x = -center.x;
           personModel.position.z = -center.z;
           personModel.position.y = -box.min.y;
-          // Apply current face state as soon as model is ready
-          if (personModel) personModel.visible = lastFaceState;
         },
         function (xhr) {
           if (xhr.lengthComputable) console.log('person.glb: ' + Math.round(100 * xhr.loaded / xhr.total) + '%');
         },
         function (err) { console.error('Error loading person.glb', err); }
       );
-
-      // Poll face detection and show/hide person
-      setInterval(function () {
-        fetch('/api/face').then(function (r) { return r.json(); }).then(function (data) {
-          lastFaceState = !!data.faceDetected;
-          if (personModel) personModel.visible = lastFaceState;
-        }).catch(function () {});
-      }, 150);
 
       function resize() {
         const width = canvas.clientWidth;
