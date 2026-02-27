@@ -179,6 +179,25 @@
       palm.receiveShadow = true;
       palmPivot.add(palm);
 
+      // Landmark-style helper dots on the palm (3 top, 2 bottom)
+      const dotMat = new THREE.MeshStandardMaterial({ color: 0xff4b4b, roughness: 0.35, metalness: 0.1 });
+      const dotGeo = new THREE.SphereGeometry(0.025, 10, 10);
+      const topDots = [
+        new THREE.Vector3(-0.2,  0.32, palmDepth * 0.6),
+        new THREE.Vector3( 0.0,  0.36, palmDepth * 0.6),
+        new THREE.Vector3( 0.2,  0.32, palmDepth * 0.6),
+      ];
+      const bottomDots = [
+        new THREE.Vector3(-0.12, -0.28, palmDepth * 0.6),
+        new THREE.Vector3( 0.12, -0.28, palmDepth * 0.6),
+      ];
+      [...topDots, ...bottomDots].forEach(pos => {
+        const m = new THREE.Mesh(dotGeo, dotMat);
+        m.position.copy(pos);
+        m.castShadow = true;
+        palmPivot.add(m);
+      });
+
       const fingers = [];
       function buildFinger(xOffset, yBase, segLengths, segRadii, fingerIndex) {
         const root = new THREE.Object3D();
@@ -253,6 +272,16 @@
       let palmBend = 0;
       let palmBendTarget = 0;
 
+      // Smoothed hand translation so the whole 3D hand follows your real wrist
+      let handOffsetX = 0;
+      let handOffsetY = 0;
+      let handOffsetZ = 0;
+
+      // Smoothed hand orientation so the 3D hand rotates like your real palm
+      const handQuat = new THREE.Quaternion();
+      const handQuatTarget = new THREE.Quaternion();
+      let hasHandOrientation = false;
+
       window.updateFromLandmarks = function(landmarks) {
         const fingerTips = [4, 8, 12, 16, 20];
         const fingerMCPs = [2, 5, 9, 13, 17];
@@ -275,19 +304,55 @@
         const avgCurl =
           (curlState[1] + curlState[2] + curlState[3] + curlState[4]) / 4;
         palmBendTarget = Math.min(Math.max(avgCurl, 0), 1);
+
+        // Compute target hand translation from wrist position (0–1 normalized image space)
+        // Centered so 0.5 is the middle of the webcam image.
+        const wx = wristPt.x - 0.5;
+        const wy = 0.5 - wristPt.y; // invert Y so up in image = up in 3D
+        const wz = (wristPt.z || 0);
+
+        const targetX = wx * 1.2;     // horizontal shift left/right
+        const targetY = wy * 1.2;     // vertical shift up/down
+        const targetZ = -wz * 0.8;    // subtle depth change
+
+        const followAlpha = 0.18;     // smoothing factor
+        handOffsetX += (targetX - handOffsetX) * followAlpha;
+        handOffsetY += (targetY - handOffsetY) * followAlpha;
+        handOffsetZ += (targetZ - handOffsetZ) * followAlpha;
+
+        // --- Hand orientation from red‑dot style palm points (wrist, index MCP, pinky MCP) ---
+        const midMcp = landmarks[9];
+        const indexMcp = landmarks[5];
+        const pinkyMcp = landmarks[17];
+
+        const vWrist = new THREE.Vector3(wristPt.x, wristPt.y, wristPt.z || 0);
+        const vIndex = new THREE.Vector3(indexMcp.x, indexMcp.y, indexMcp.z || 0);
+        const vPinky = new THREE.Vector3(pinkyMcp.x, pinkyMcp.y, pinkyMcp.z || 0);
+        const vMiddle = new THREE.Vector3(midMcp.x, midMcp.y, midMcp.z || 0);
+
+        // Local axes for the palm: X across knuckles, Y from wrist to middle finger, Z = palm normal
+        const xAxis = new THREE.Vector3().subVectors(vIndex, vPinky).normalize();
+        const yAxis = new THREE.Vector3().subVectors(vMiddle, vWrist).normalize();
+        const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+        yAxis.crossVectors(zAxis, xAxis).normalize();
+
+        // Flip axes to match the 3D hand's coordinate system (fix opposite motion)
+        xAxis.multiplyScalar(-1);
+        yAxis.multiplyScalar(-1);
+
+        const m = new THREE.Matrix4();
+        m.makeBasis(xAxis, yAxis, zAxis);
+        handQuatTarget.setFromRotationMatrix(m);
+        hasHandOrientation = true;
       };
 
       let isDragging = false, prevMouse = { x: 0, y: 0 };
-      let rotX = -0.3, rotY = 0.2;
       canvas.addEventListener('mousedown', e => { isDragging = true; prevMouse = { x: e.clientX, y: e.clientY }; });
       canvas.addEventListener('mouseup', () => isDragging = false);
       canvas.addEventListener('mousemove', e => {
         if (!isDragging) return;
-        const dx = e.clientX - prevMouse.x, dy = e.clientY - prevMouse.y;
-        rotY += dx * 0.006; rotX += dy * 0.006;
+        // Rotation is now driven by landmarks; dragging is kept only for future tweaks.
         prevMouse = { x: e.clientX, y: e.clientY };
-        handRoot.rotation.x = rotX;
-        handRoot.rotation.y = rotY;
       });
       canvas.addEventListener('wheel', e => {
         camera.position.z = Math.max(1.5, Math.min(6, camera.position.z + e.deltaY * 0.005));
@@ -299,11 +364,7 @@
       canvas.addEventListener('touchend', () => isDragging = false);
       canvas.addEventListener('touchmove', e => {
         if (!isDragging) return;
-        const dx = e.touches[0].clientX - prevMouse.x, dy = e.touches[0].clientY - prevMouse.y;
-        rotY += dx * 0.006; rotX += dy * 0.006;
         prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        handRoot.rotation.x = rotX;
-        handRoot.rotation.y = rotY;
       });
 
       setInterval(function() {
@@ -316,18 +377,24 @@
       function animate() {
         requestAnimationFrame(animate);
         const t = clock.getElapsedTime();
-        handRoot.position.y = Math.sin(t * 0.8) * 0.03;
-        if (!isDragging) {
-          handRoot.rotation.x = rotX;
-          handRoot.rotation.y = rotY + Math.sin(t * 0.3) * 0.05;
+
+        // Smooth hand orientation from landmarks
+        if (hasHandOrientation) {
+          handQuat.slerp(handQuatTarget, 0.18);
+          handRoot.quaternion.copy(handQuat);
         }
-        handRoot.rotation.z = 0;
+
+        // Base idle bob + live tracking offset from the real wrist
+        handRoot.position.x = handOffsetX;
+        handRoot.position.y = handOffsetY + Math.sin(t * 0.8) * 0.03;
+        handRoot.position.z = handOffsetZ;
 
         // Smooth palm bending so it feels organic
         palmBend += (palmBendTarget - palmBend) * 0.15;
         // Slight flex forward/back and a tiny side tilt when making a fist
         palmPivot.rotation.x = -palmBend * 0.3;
         palmPivot.rotation.z = palmBend * 0.12;
+
         const w = canvas.clientWidth, h = canvas.clientHeight;
         if (canvas.width !== w || canvas.height !== h) {
           renderer.setSize(w, h);
